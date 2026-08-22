@@ -229,9 +229,12 @@ const layer = Layer.effect(
       const publish = (event: LLMEvent, outputPaths: ReadonlyArray<string> = []) =>
         withPublication(publisher.publish(event, outputPaths))
       let overflowFailure: ProviderErrorEvent | undefined
+      let hasReasoning = false
       const providerStream = llm.stream(request).pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
+            if (event.type === "reasoning-start" || event.type === "reasoning-delta" || event.type === "reasoning-end")
+              hasReasoning = true
             if (overflowFailure || publisher.hasProviderError()) return
             if (LLMEvent.is.providerError(event)) {
               if (isContextOverflowFailure(event) && !publisher.hasAssistantStarted()) {
@@ -342,6 +345,30 @@ const layer = Layer.effect(
           if (stream._tag === "Failure") return yield* Effect.failCause(stream.cause)
           if (settled._tag === "Failure" && Cause.hasInterrupts(settled.cause))
             return yield* Effect.failCause(settled.cause)
+          // #2 V2 auto-prod: reasoning-only stall (no tool-call) with non-tool finish
+          // would otherwise park and require a manual "continue" steer. Auto-continue
+          // up to 3 consecutive reasoning-only turns (cap prevents infinite loops).
+          const stepFinish = publisher.stepSettlement()?.finish
+          const isReasoningOnlyStall =
+            hasReasoning && !needsContinuation && !publisher.hasProviderError() && stepFinish !== "tool-calls"
+          if (isReasoningOnlyStall) {
+            const recent = entries
+              .filter((e) => e.message.type === "assistant" && "content" in e.message)
+              .slice(-3)
+              .filter((e) =>
+                (e.message as unknown as { content: Array<{ type: string; text?: string }> }).content.some(
+                  (p) => p.type === "reasoning" && !!p.text?.trim(),
+                ),
+              ).length
+            if (recent < 3 && currentStep < 20) {
+              needsContinuation = true
+              yield* Effect.logInfo("auto-continuing reasoning-only stall", {
+                "session.id": sessionID,
+                finish: stepFinish,
+                step: currentStep,
+              })
+            }
+          }
           return { needsContinuation: !publisher.hasProviderError() && needsContinuation, step: currentStep }
         }),
       )

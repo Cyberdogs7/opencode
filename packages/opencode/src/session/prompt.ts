@@ -1107,6 +1107,11 @@ const layer = Layer.effect(
             lastAssistantMsg?.parts.some(
               (part) => part.type === "tool" && !part.metadata?.providerExecuted && !isOrphanedInterruptedTool(part),
             ) ?? false
+          const reasoningParts =
+            lastAssistantMsg?.parts.filter(
+              (part): part is SessionV1.ReasoningPart => part.type === "reasoning" && !!part.text?.trim(),
+            ) ?? []
+          const hasReasoning = reasoningParts.length > 0
 
           if (
             lastAssistant?.finish &&
@@ -1124,6 +1129,37 @@ const layer = Layer.effect(
                 tool: orphan.tool,
                 callID: orphan.callID,
               })
+            }
+            // #1: reasoning-only turns look empty in the TUI (reasoning is
+            // collapsed/hidden). Mirror it as visible text so "returned without
+            // a response" never happens.
+            if (hasReasoning) {
+              for (const rp of reasoningParts) {
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: lastAssistant.id,
+                  sessionID,
+                  type: "text",
+                  text: rp.text,
+                  synthetic: true,
+                } satisfies SessionV1.TextPart)
+              }
+              // #2: auto-continue instead of parking — the model planned work
+              // (e.g. "apply min(...) fixes") but emitted 0 tool-calls. Don't
+              // require a manual "continue" steer; re-enter the provider loop.
+              // Guard against infinite reasoning-only loops: cap consecutive auto-continues.
+              const recentReasoningOnlyCount = msgs
+                .filter((m) => m.info.role === "assistant" && m.info.finish && !["tool-calls"].includes(m.info.finish))
+                .slice(-3)
+                .filter((m) => m.parts.some((part) => part.type === "reasoning" && !!part.text?.trim())).length
+              if (recentReasoningOnlyCount < 3) {
+                yield* Effect.logInfo("auto-continuing reasoning-only stall", {
+                  "session.id": sessionID,
+                  messageID: lastAssistant.id,
+                  finish: lastAssistant.finish,
+                })
+                continue
+              }
             }
             yield* Effect.logInfo("exiting loop", { "session.id": sessionID })
             break
