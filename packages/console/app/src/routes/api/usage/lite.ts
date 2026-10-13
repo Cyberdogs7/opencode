@@ -48,17 +48,25 @@ export async function GET(event: APIEvent) {
     const limits = LiteData.getLimits()
     const sub = data.lite
 
-    const rolling = sub?.rollingUsage !== undefined && sub.timeRollingUpdated
-      ? Subscription.analyzeRollingUsage({ limit: limits.rollingLimit, window: limits.rollingWindow, usage: sub.rollingUsage, timeUpdated: sub.timeRollingUpdated })
-      : { status: "ok" as const, usagePercent: 0, resetInSec: 0 }
+    const rolling = Subscription.analyzeRollingUsage({
+      limit: limits.rollingLimit,
+      window: limits.rollingWindow,
+      usage: sub?.rollingUsage ?? 0,
+      timeUpdated: sub?.timeRollingUpdated ?? new Date(),
+    })
 
-    const weekly = sub?.weeklyUsage !== undefined && sub.timeWeeklyUpdated
-      ? Subscription.analyzeWeeklyUsage({ limit: limits.weeklyLimit, usage: sub.weeklyUsage, timeUpdated: sub.timeWeeklyUpdated })
-      : { status: "ok" as const, usagePercent: 0, resetInSec: 0 }
+    const weekly = Subscription.analyzeWeeklyUsage({
+      limit: limits.weeklyLimit,
+      usage: sub?.weeklyUsage ?? 0,
+      timeUpdated: sub?.timeWeeklyUpdated ?? new Date(),
+    })
 
-    const monthly = sub?.monthlyUsage !== undefined && sub.timeMonthlyUpdated
-      ? Subscription.analyzeMonthlyUsage({ limit: limits.monthlyLimit, usage: sub.monthlyUsage, timeUpdated: sub.timeMonthlyUpdated, timeSubscribed: sub.timeCreated })
-      : { status: "ok" as const, usagePercent: 0, resetInSec: 0 }
+    const monthly = Subscription.analyzeMonthlyUsage({
+      limit: limits.monthlyLimit,
+      usage: sub?.monthlyUsage ?? 0,
+      timeUpdated: sub?.timeMonthlyUpdated ?? new Date(),
+      timeSubscribed: sub?.timeCreated ?? new Date(),
+    })
 
     return Response.json({ rolling, weekly, monthly }, { status: 200 })
   } catch (error) {
