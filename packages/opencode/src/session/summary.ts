@@ -1,4 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { isDeepStrictEqual } from "node:util"
 import { Effect, Layer, Context, Schema } from "effect"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -122,6 +123,10 @@ const layer = Layer.effect(
       const target = messages.find((m) => m.info.id === input.messageID)
       if (!target || target.info.role !== "user") return
       const msgDiffs = yield* computeDiff({ messages })
+      // summarize runs on every step-finish, and each update re-publishes the whole user message
+      // (including the full patch text) as a durable event. When the diff is unchanged this writes
+      // an identical multi-megabyte snapshot again, so skip the write to keep the event log small.
+      if (isDeepStrictEqual(target.info.summary?.diffs ?? [], msgDiffs)) return
       target.info.summary = { ...target.info.summary, diffs: msgDiffs }
       yield* sessions.updateMessage(target.info)
     })
