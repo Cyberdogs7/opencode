@@ -513,6 +513,7 @@ export async function handler(
               ? {
                   workspace: error.workspace,
                   limitName: error.limitName,
+                  limits: error.limits,
                 }
               : {},
         }),
@@ -879,64 +880,51 @@ export async function handler(
         const sub = authInfo.lite
         const liteData = LiteData.getLimits()
 
-        // Check weekly limit
-        if (sub.weeklyUsage && sub.timeWeeklyUpdated) {
-          const result = Subscription.analyzeWeeklyUsage({
-            limit: liteData.weeklyLimit,
-            usage: sub.weeklyUsage,
-            timeUpdated: sub.timeWeeklyUpdated,
-          })
-          if (result.status === "rate-limited")
-            throw new GoUsageLimitError(
-              t("zen.api.error.goSubscriptionWeeklyLimitExceeded", {
-                retryIn: formatRetryTime(result.resetInSec),
-                consoleGoUrl,
-              }),
-              authInfo.workspaceID,
-              "weekly",
-              result.resetInSec,
-            )
-        }
+        const weeklyResult = sub.weeklyUsage && sub.timeWeeklyUpdated
+          ? Subscription.analyzeWeeklyUsage({ limit: liteData.weeklyLimit, usage: sub.weeklyUsage, timeUpdated: sub.timeWeeklyUpdated })
+          : { status: "ok" as const, usagePercent: 0, resetInSec: 0 }
+        const monthlyResult = sub.monthlyUsage && sub.timeMonthlyUpdated
+          ? Subscription.analyzeMonthlyUsage({ limit: liteData.monthlyLimit, usage: sub.monthlyUsage, timeUpdated: sub.timeMonthlyUpdated, timeSubscribed: sub.timeCreated })
+          : { status: "ok" as const, usagePercent: 0, resetInSec: 0 }
+        const rollingResult = sub.rollingUsage && sub.timeRollingUpdated
+          ? Subscription.analyzeRollingUsage({ limit: liteData.rollingLimit, window: liteData.rollingWindow, usage: sub.rollingUsage, timeUpdated: sub.timeRollingUpdated })
+          : { status: "ok" as const, usagePercent: 0, resetInSec: 0 }
 
-        // Check monthly limit
-        if (sub.monthlyUsage && sub.timeMonthlyUpdated) {
-          const result = Subscription.analyzeMonthlyUsage({
-            limit: liteData.monthlyLimit,
-            usage: sub.monthlyUsage,
-            timeUpdated: sub.timeMonthlyUpdated,
-            timeSubscribed: sub.timeCreated,
-          })
-          if (result.status === "rate-limited")
-            throw new GoUsageLimitError(
-              t("zen.api.error.goSubscriptionMonthlyLimitExceeded", {
-                retryIn: formatRetryTime(result.resetInSec),
-                consoleGoUrl,
-              }),
-              authInfo.workspaceID,
-              "monthly",
-              result.resetInSec,
-            )
-        }
+        const limits = { rolling: rollingResult, weekly: weeklyResult, monthly: monthlyResult }
 
-        // Check rolling limit
-        if (sub.rollingUsage && sub.timeRollingUpdated) {
-          const result = Subscription.analyzeRollingUsage({
-            limit: liteData.rollingLimit,
-            window: liteData.rollingWindow,
-            usage: sub.rollingUsage,
-            timeUpdated: sub.timeRollingUpdated,
-          })
-          if (result.status === "rate-limited")
-            throw new GoUsageLimitError(
-              t("zen.api.error.goSubscriptionRollingLimitExceeded", {
-                retryIn: formatRetryTime(result.resetInSec),
-                consoleGoUrl,
-              }),
-              authInfo.workspaceID,
-              "5 hour",
-              result.resetInSec,
-            )
-        }
+        if (weeklyResult.status === "rate-limited")
+          throw new GoUsageLimitError(
+            t("zen.api.error.goSubscriptionWeeklyLimitExceeded", {
+              retryIn: formatRetryTime(weeklyResult.resetInSec),
+              consoleGoUrl,
+            }),
+            authInfo.workspaceID,
+            "weekly",
+            limits,
+            weeklyResult.resetInSec,
+          )
+        if (monthlyResult.status === "rate-limited")
+          throw new GoUsageLimitError(
+            t("zen.api.error.goSubscriptionMonthlyLimitExceeded", {
+              retryIn: formatRetryTime(monthlyResult.resetInSec),
+              consoleGoUrl,
+            }),
+            authInfo.workspaceID,
+            "monthly",
+            limits,
+            monthlyResult.resetInSec,
+          )
+        if (rollingResult.status === "rate-limited")
+          throw new GoUsageLimitError(
+            t("zen.api.error.goSubscriptionRollingLimitExceeded", {
+              retryIn: formatRetryTime(rollingResult.resetInSec),
+              consoleGoUrl,
+            }),
+            authInfo.workspaceID,
+            "5 hour",
+            limits,
+            rollingResult.resetInSec,
+          )
 
         return "lite"
       } catch (e) {

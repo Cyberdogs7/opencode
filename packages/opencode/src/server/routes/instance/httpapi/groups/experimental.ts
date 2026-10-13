@@ -87,6 +87,12 @@ export const SessionListQuery = Schema.Struct({
   archived: Schema.optional(QueryBoolean),
 })
 
+export const LiteUsageResponse = Schema.Struct({
+  rolling: Schema.Struct({ status: Schema.String, usagePercent: Schema.Number, resetInSec: Schema.Number }),
+  weekly: Schema.Struct({ status: Schema.String, usagePercent: Schema.Number, resetInSec: Schema.Number }),
+  monthly: Schema.Struct({ status: Schema.String, usagePercent: Schema.Number, resetInSec: Schema.Number }),
+}).annotate({ identifier: "LiteUsage" })
+
 export const ExperimentalPaths = {
   capabilities: "/experimental/capabilities",
   console: "/experimental/console",
@@ -99,6 +105,7 @@ export const ExperimentalPaths = {
   session: "/experimental/session",
   sessionBackground: "/experimental/session/:sessionID/background",
   resource: "/experimental/resource",
+  usageLite: "/experimental/usage/lite",
 } as const
 
 export const ExperimentalApi = HttpApi.make("experimental")
@@ -243,6 +250,17 @@ export const ExperimentalApi = HttpApi.make("experimental")
             summary: "Background subagents",
             description:
               "Detach any synchronous subagents currently blocking the session and continue them in the background.",
+          }),
+        ),
+        HttpApiEndpoint.get("usageLite", ExperimentalPaths.usageLite, {
+          query: WorkspaceRoutingQuery,
+          success: described(LiteUsageResponse, "Lite subscription usage"),
+          error: HttpApiError.InternalServerError,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "experimental.usage.lite",
+            summary: "Get lite subscription usage",
+            description: "Get the current lite (Go) subscription usage across rolling, weekly, and monthly windows.",
           }),
         ),
         HttpApiEndpoint.get("resource", ExperimentalPaths.resource, {

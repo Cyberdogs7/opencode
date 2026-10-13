@@ -29,7 +29,15 @@ export const Key = Schema.Struct({
   metadata: optional(Schema.Record(Schema.String, Schema.Unknown)),
 }).annotate({ identifier: "Credential.Key" })
 
-export const Value = Schema.Union([OAuth, Key])
+export interface KeyRing extends Schema.Schema.Type<typeof KeyRing> {}
+export const KeyRing = Schema.Struct({
+  type: Schema.Literal("keyring"),
+  keys: Schema.Array(Schema.String),
+  activeIndex: Schema.optional(Schema.Number),
+  metadata: optional(Schema.Record(Schema.String, Schema.Unknown)),
+}).annotate({ identifier: "Credential.KeyRing" })
+
+export const Value = Schema.Union([OAuth, Key, KeyRing])
   .pipe(Schema.toTaggedUnion("type"))
   .annotate({ identifier: "Credential.Value" })
 export type Value = Schema.Schema.Type<typeof Value>

@@ -27,6 +27,11 @@ import { Database } from "@opencode-ai/core/database/database"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 
 const DOOM_LOOP_THRESHOLD = 3
+// Running tool progress is streamed frequently (e.g. every stdout chunk). Persisting the
+// full part on every chunk balloons the durable event log, so bound progress to a small
+// cadence and a hard cap per tool call. Terminal states always persist.
+const TOOL_PROGRESS_MIN_INTERVAL_MS = 1000
+const TOOL_PROGRESS_MAX_UPDATES = 200
 export type Result = "compact" | "stop" | "continue"
 
 export interface Handle {
@@ -66,12 +71,36 @@ type ToolCall = {
 
 interface ProcessorContext extends Input {
   toolcalls: Record<string, ToolCall>
+  toolProgress: Record<string, { at: number; count: number }>
   shouldBreak: boolean
   snapshot: string | undefined
   blocked: boolean
   needsCompaction: boolean
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
+}
+
+function shouldPersistToolProgress(
+  ctx: ProcessorContext,
+  toolCallID: string,
+  part: SessionV1.ToolPart,
+): boolean {
+  const status = part.state.status
+  if (status === "completed" || status === "error") {
+    delete ctx.toolProgress[toolCallID]
+    return true
+  }
+  const now = Date.now()
+  const previous = ctx.toolProgress[toolCallID]
+  if (!previous) {
+    ctx.toolProgress[toolCallID] = { at: now, count: 1 }
+    return true
+  }
+  if (previous.count >= TOOL_PROGRESS_MAX_UPDATES) return false
+  if (now - previous.at < TOOL_PROGRESS_MIN_INTERVAL_MS) return false
+  previous.at = now
+  previous.count += 1
+  return true
 }
 
 type StreamEvent = LLMEvent
@@ -105,6 +134,7 @@ const layer = Layer.effect(
         sessionID: input.sessionID,
         model: input.model,
         toolcalls: {},
+        toolProgress: {},
         shouldBreak: false,
         snapshot: initialSnapshot,
         blocked: false,
@@ -147,7 +177,9 @@ const layer = Layer.effect(
       ) {
         const match = yield* readToolCall(toolCallID)
         if (!match) return undefined
-        const part = yield* session.updatePart(update(match.part))
+        const next = update(match.part)
+        if (!shouldPersistToolProgress(ctx, toolCallID, next)) return next
+        const part = yield* session.updatePart(next)
         ctx.toolcalls[toolCallID] = {
           ...match.call,
           partID: part.id,
@@ -592,6 +624,7 @@ const layer = Layer.effect(
           })
         }
         ctx.toolcalls = {}
+        ctx.toolProgress = {}
         ctx.assistantMessage.time.completed = Date.now()
         yield* session.updateMessage(ctx.assistantMessage)
       })

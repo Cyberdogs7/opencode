@@ -230,11 +230,13 @@ const layer = Layer.effect(
         withPublication(publisher.publish(event, outputPaths))
       let overflowFailure: ProviderErrorEvent | undefined
       let hasReasoning = false
+      let hasText = false
       const providerStream = llm.stream(request).pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             if (event.type === "reasoning-start" || event.type === "reasoning-delta" || event.type === "reasoning-end")
               hasReasoning = true
+            if (LLMEvent.is.textDelta(event)) hasText = true
             if (overflowFailure || publisher.hasProviderError()) return
             if (LLMEvent.is.providerError(event)) {
               if (isContextOverflowFailure(event) && !publisher.hasAssistantStarted()) {
@@ -350,16 +352,23 @@ const layer = Layer.effect(
           // up to 3 consecutive reasoning-only turns (cap prevents infinite loops).
           const stepFinish = publisher.stepSettlement()?.finish
           const isReasoningOnlyStall =
-            hasReasoning && !needsContinuation && !publisher.hasProviderError() && stepFinish !== "tool-calls"
+            hasReasoning &&
+            !hasText &&
+            !needsContinuation &&
+            !publisher.hasProviderError() &&
+            stepFinish !== "tool-calls"
           if (isReasoningOnlyStall) {
+            // Count stalled history the same way the stall is detected: reasoning
+            // with no text. Requiring non-empty reasoning text here let a
+            // provider that emits an empty reasoning block (encrypted reasoning,
+            // no summary) stall on every turn without ever advancing the cap.
             const recent = entries
               .filter((e) => e.message.type === "assistant" && "content" in e.message)
               .slice(-3)
-              .filter((e) =>
-                (e.message as unknown as { content: Array<{ type: string; text?: string }> }).content.some(
-                  (p) => p.type === "reasoning" && !!p.text?.trim(),
-                ),
-              ).length
+              .filter((e) => {
+                const content = (e.message as unknown as { content: Array<{ type: string }> }).content
+                return content.some((p) => p.type === "reasoning") && !content.some((p) => p.type === "text")
+              }).length
             if (recent < 3 && currentStep < 20) {
               needsContinuation = true
               yield* Effect.logInfo("auto-continuing reasoning-only stall", {

@@ -6,6 +6,7 @@ import { Config } from "@/config/config"
 import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
 import { NoSuchModelError, type Provider as SDK } from "ai"
 import { Npm } from "@opencode-ai/core/npm"
+import { KeyRing } from "@opencode-ai/core/session/runner/key-ring"
 import { Hash } from "@opencode-ai/core/util/hash"
 import { Plugin } from "../plugin"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
@@ -1049,6 +1050,7 @@ export const Info = Schema.Struct({
   source: Schema.Literals(["env", "config", "custom", "api"]),
   env: Schema.Array(Schema.String),
   key: optional(Schema.String),
+  keys: optional(Schema.Array(Schema.String)),
   options: Schema.Record(Schema.String, Schema.Any),
   models: Schema.Record(Schema.String, Model),
 }).annotate({ identifier: "Provider" })
@@ -1070,10 +1072,11 @@ export const ConfigProvidersResult = Schema.Struct({
 export type ConfigProvidersResult = Types.DeepMutable<Schema.Schema.Type<typeof ConfigProvidersResult>>
 
 export function toPublicInfo(provider: Info): Info {
+  const { keys, ...rest } = provider
   return JSON.parse(
     JSON.stringify(
       {
-        ...provider,
+        ...rest,
         models: Object.fromEntries(Object.entries(provider.models).filter(([, model]) => Schema.is(Model)(model))),
       },
       (_, value) => {
@@ -1400,7 +1403,9 @@ const layer = Layer.effect(
           const pluginAuth = yield* auth.get(providerID).pipe(Effect.orDie)
 
           provider.models = yield* Effect.promise(async () => {
-            const next = await models(toPublicInfo(provider), { auth: pluginAuth })
+            const next = await models(toPublicInfo(provider), {
+              auth: pluginAuth?.type === "keyring" ? undefined : pluginAuth,
+            })
             return Object.fromEntries(
               Object.entries(next).map(([id, model]) => [
                 id,
@@ -1536,6 +1541,13 @@ const layer = Layer.effect(
               key: provider.key,
             })
           }
+          if (provider.type === "keyring") {
+            mergeProvider(providerID, {
+              source: "api",
+              key: provider.keys[0],
+              keys: provider.keys.length > 1 ? [...provider.keys] : undefined,
+            })
+          }
         }
 
         // plugin auth loader - database now has entries for config providers
@@ -1663,7 +1675,7 @@ const layer = Layer.effect(
 
     const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
 
-    async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
+    async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>, keyOverride?: string) {
       try {
         const provider = s.providers[model.providerID]
         const options = { ...provider.options }
@@ -1710,7 +1722,8 @@ const layer = Layer.effect(
         })
 
         if (baseURL !== undefined) options["baseURL"] = baseURL
-        if (options["apiKey"] === undefined && provider.key) options["apiKey"] = provider.key
+        const apiKey = keyOverride ?? provider.key
+        if (options["apiKey"] === undefined && apiKey) options["apiKey"] = apiKey
         if (model.headers)
           options["headers"] = {
             ...options["headers"],
@@ -1828,13 +1841,15 @@ const layer = Layer.effect(
     const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
-      const key = `${model.providerID}/${model.id}`
+      const provider = s.providers[model.providerID]
+      const entries = provider?.keys?.length ? provider.keys : provider?.key ? [provider.key] : []
+      const picked = entries.length > 1 ? (KeyRing.pick(model.providerID, entries) ?? entries[0]) : entries[0]
+      const key = `${model.providerID}/${model.id}:${picked === undefined ? -1 : entries.indexOf(picked)}`
       if (s.models.has(key)) return s.models.get(key)!
 
-      const provider = s.providers[model.providerID]
       return yield* EffectPromise.refineRejection(
         async () => {
-          const sdk = await resolveSDK(model, s, envs)
+          const sdk = await resolveSDK(model, s, envs, picked)
           const language = s.modelLoaders[model.providerID]
             ? await s.modelLoaders[model.providerID](
                 sdk,

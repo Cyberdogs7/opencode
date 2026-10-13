@@ -1,4 +1,5 @@
 import type { NamedError } from "@opencode-ai/core/util/error"
+import { KeyRing } from "@opencode-ai/core/session/runner/key-ring"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Cause, Clock, Duration, Effect, Schedule } from "effect"
 import { MessageV2 } from "./message-v2"
@@ -11,6 +12,18 @@ export const GO_UPSELL_MESSAGE = "Free usage exceeded, subscribe to Go"
 export const GO_UPSELL_URL = "https://opencode.ai/go"
 export type RetryReason = "free_tier_limit" | "account_rate_limit" | (string & {})
 
+export type LimitStatus = {
+  status: "ok" | "rate-limited"
+  usagePercent: number
+  resetInSec: number
+}
+
+export type CombinedLimits = {
+  rolling: LimitStatus
+  weekly: LimitStatus
+  monthly: LimitStatus
+}
+
 export type Retryable = {
   message: string
   action?: {
@@ -20,6 +33,7 @@ export type Retryable = {
     message: string
     label: string
     link?: string
+    limits?: CombinedLimits
   }
 }
 
@@ -91,6 +105,7 @@ export function retryable(error: Err, provider: string) {
       const workspace = str(body?.metadata?.workspace)
       const limitName = str(body?.metadata?.limitName)
       const retryAfter = num(error.data.responseHeaders?.["retry-after"])
+      KeyRing.exhaustPrefix(provider, retryAfter !== undefined ? retryAfter * 1000 : undefined)
       const resetIn = iife(() => {
         if (retryAfter === undefined) return ""
         const seconds = Math.max(0, Math.ceil(retryAfter))
@@ -104,6 +119,19 @@ export function retryable(error: Err, provider: string) {
         return minutes > 0 ? unit(minutes, "minute") : "less than a minute"
       })
 
+      const raw = body?.metadata?.limits
+      const limitItem = (item: unknown): LimitStatus => {
+        if (!isRecord(item)) return { status: "ok", usagePercent: 0, resetInSec: 0 }
+        return {
+          status: item.status as LimitStatus["status"],
+          usagePercent: item.usagePercent as number,
+          resetInSec: item.resetInSec as number,
+        }
+      }
+      const limits: CombinedLimits | undefined = isRecord(raw)
+        ? { rolling: limitItem(raw.rolling), weekly: limitItem(raw.weekly), monthly: limitItem(raw.monthly) }
+        : undefined
+
       const message = `${limitName ? `${limitName} usage limit` : "Usage limit"} reached. It will reset in ${resetIn}. To continue using this model now, enable usage from your available balance`
 
       const link = `https://opencode.ai/workspace/${workspace}/go`
@@ -116,6 +144,7 @@ export function retryable(error: Err, provider: string) {
           message,
           label: "open settings",
           link,
+          limits,
         },
       }
     }
@@ -131,6 +160,7 @@ export function retryable(error: Err, provider: string) {
       lower.includes("rate limit") ||
       lower.includes("too many requests")
     ) {
+      KeyRing.exhaustPrefix(provider)
       return { message: msg }
     }
   }
@@ -140,12 +170,14 @@ export function retryable(error: Err, provider: string) {
   const code = typeof json.code === "string" ? json.code : ""
 
   if (json.type === "error" && json.error?.type === "too_many_requests") {
+    KeyRing.exhaustPrefix(provider)
     return { message: "Too Many Requests" }
   }
   if (code.includes("exhausted") || code.includes("unavailable")) {
     return { message: "Provider is overloaded" }
   }
   if (json.type === "error" && typeof json.error?.code === "string" && json.error.code.includes("rate_limit")) {
+    KeyRing.exhaustPrefix(provider)
     return { message: "Rate Limited" }
   }
   return undefined

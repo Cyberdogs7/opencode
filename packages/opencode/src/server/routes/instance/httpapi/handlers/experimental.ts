@@ -12,10 +12,11 @@ import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
 import { Worktree } from "@/worktree"
 import { Effect, Option } from "effect"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
-import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, WorktreeApiError } from "../groups/experimental"
+import { ConsoleSwitchPayload, LiteUsageResponse, SessionListQuery, ToolListQuery, WorktreeApiError } from "../groups/experimental"
 
 function mapWorktreeError<A, R>(self: Effect.Effect<A, Worktree.Error, R>) {
   return self.pipe(
@@ -175,6 +176,26 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       return yield* mcp.resources()
     })
 
+    const getUsageLite = Effect.fn("ExperimentalHttpApi.usageLite")(function* () {
+      const active = yield* account.active().pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
+      if (Option.isNone(active)) return yield* Effect.fail(new HttpApiError.InternalServerError({}))
+      const { id: accountID, active_org_id } = active.value
+      const token = yield* account.token(accountID).pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
+      if (Option.isNone(token)) return yield* Effect.fail(new HttpApiError.InternalServerError({}))
+      const { account: acct, accessToken } = token.value
+      const http = yield* HttpClient.HttpClient
+      const response = yield* http.execute(
+        HttpClientRequest.get(`${acct.url}/api/usage/lite`).pipe(
+          HttpClientRequest.acceptJson,
+          HttpClientRequest.bearerToken(accessToken),
+          ...(active_org_id ? [HttpClientRequest.setHeader("x-org-id", active_org_id)] : []),
+        ),
+      ).pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
+      return yield* HttpClientResponse.schemaBodyJson(LiteUsageResponse)(response).pipe(
+        Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))),
+      )
+    })
+
     return handlers
       .handle("capabilities", capabilities)
       .handle("console", getConsole)
@@ -188,6 +209,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       .handle("worktreeReset", worktreeReset)
       .handle("session", session)
       .handle("sessionBackground", sessionBackground)
+      .handle("usageLite", getUsageLite)
       .handle("resource", resource)
   }),
 )

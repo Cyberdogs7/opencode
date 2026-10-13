@@ -92,6 +92,7 @@ export function useUsageExceededDialogs() {
             description={isEnglish() ? action.message : t("dialog.usageExceeded.accountRateLimit.description")}
             actionLabel={isEnglish() ? action.label : t("dialog.usageExceeded.accountRateLimit.actionLabel")}
             link={action.link}
+            limits={"limits" in action ? action.limits : undefined}
             onClose={(dontShowAgain) => {
               setGoUpsellState(keys.lastSeenAt, Date.now())
               if (dontShowAgain) setGoUpsellState(keys.dontShow, Date.now())

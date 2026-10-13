@@ -482,9 +482,25 @@ export const ProvidersLoginCommand = effectCmd({
       validate: (x) => (x && x.length > 0 ? undefined : "Required"),
     })
     const apiKey = yield* promptValue(key)
-    yield* Effect.orDie(authSvc.set(provider, { type: "api", key: apiKey }))
-
-    yield* Prompt.outro("Done")
+    const extra = yield* promptValue(
+      yield* Prompt.password({
+        message: "Enter additional API keys (comma separated), or leave empty for a single key",
+      }),
+    )
+    const keys = extra ? [apiKey, ...extra.split(",").map((x) => x.trim()).filter(Boolean)] : [apiKey]
+    yield* Effect.orDie(
+      authSvc.set(
+        provider,
+        keys.length > 1
+          ? { type: "keyring", keys }
+          : { type: "api", key: apiKey },
+      ),
+    )
+    yield* Prompt.outro(
+      keys.length > 1
+        ? `Done (${keys.length} keys stored, rotating on rate limits)`
+        : "Done",
+    )
   }),
 })
 

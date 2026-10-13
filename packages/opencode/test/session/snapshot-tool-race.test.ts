@@ -14,6 +14,7 @@
 import { expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { and, eq } from "drizzle-orm"
 import fs from "fs/promises"
 import path from "path"
 import { Session } from "@/session/session"
@@ -22,6 +23,7 @@ import { SessionSummary } from "../../src/session/summary"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
+import { EventTable } from "@opencode-ai/core/event/sql"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -183,6 +185,69 @@ it.live("tool execution produces non-empty session diff (snapshot race)", () =>
         yield* Effect.sleep("100 millis")
       }
       expect(diff.length).toBeGreaterThan(0)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("re-summarizing with an unchanged diff does not append another message.updated event", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ dir, llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const summary = yield* SessionSummary.Service
+      const db = (yield* Database.Service).db
+
+      const session = yield* sessions.create({
+        title: "summary idempotency test",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      const command = `echo 'summary idempotency' > ${path.join(dir, "summary-idempotent.txt")}`
+      yield* llm.toolMatch((hit) => JSON.stringify(hit.body).includes("create the file"), "bash", { command })
+      yield* llm.textMatch((hit) => JSON.stringify(hit.body).includes("bash"), "done")
+
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "create the file" }],
+      })
+
+      const result = yield* prompt.loop({ sessionID: session.id })
+      expect(result.info.role).toBe("assistant")
+
+      const allMsgs = yield* MessageV2.filterCompactedEffect(session.id)
+      const user = allMsgs.find(
+        (msg): msg is SessionV1.WithParts & { info: SessionV1.User } => msg.info.role === "user",
+      )
+      if (!user) throw new Error("Expected user message")
+
+      // Wait for the turn diff — summarize() is fire-and-forget.
+      let diff: Array<{ file?: string }> = []
+      for (let i = 0; i < 50; i++) {
+        diff = yield* summary.diff({ sessionID: session.id, messageID: user.info.id })
+        if (diff.length > 0) break
+        yield* Effect.sleep("100 millis")
+      }
+      expect(diff.length).toBeGreaterThan(0)
+
+      const countUpdates = Effect.gen(function* () {
+        const rows = yield* db
+          .select({ id: EventTable.id })
+          .from(EventTable)
+          .where(and(eq(EventTable.aggregate_id, session.id), eq(EventTable.type, "message.updated.1")))
+          .all()
+          .pipe(Effect.orDie)
+        return rows.length
+      })
+
+      // Recomputing the same diff must not re-publish the whole message with its patch text.
+      const before = yield* countUpdates
+      yield* summary.summarize({ sessionID: session.id, messageID: user.info.id })
+      yield* summary.summarize({ sessionID: session.id, messageID: user.info.id })
+      const after = yield* countUpdates
+      expect(after).toBe(before)
     }),
     { git: true, config: providerCfg },
   ),

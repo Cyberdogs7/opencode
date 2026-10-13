@@ -276,6 +276,11 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       })
       for (const part of msg.parts) {
         if (part.type === "text") {
+          // Synthetic assistant text is display-only (reasoning mirrored onto a
+          // reasoning-only turn for clients that hide reasoning). Replaying it
+          // would hand the model its own reasoning as an assistant answer and
+          // duplicate those tokens in every later request.
+          if (part.synthetic) continue
           const text = part.text === "" && hasSignedReasoning ? " " : part.text
           assistantMessage.parts.push({
             type: "text",

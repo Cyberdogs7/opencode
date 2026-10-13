@@ -514,6 +514,48 @@ it.instance("loop calls LLM and returns assistant message", () =>
   }),
 )
 
+// Regression: a reasoning-only turn used to mirror its reasoning into a fresh
+// synthetic text part on every pass of the loop and `continue` without ever
+// calling the provider again, so the same answer duplicated forever and
+// overflowed the context.
+it.instance(
+  "bounds reasoning-only auto-continue and mirrors each stall once",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Pinned" })
+
+      // Every provider turn stalls: reasoning, no text, stop finish.
+      yield* llm.reason("planning the min fix")
+      yield* llm.reason("planning the min fix")
+      yield* llm.reason("planning the min fix")
+
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "apply the min fix" }],
+      })
+      yield* prompt.loop({ sessionID: chat.id })
+
+      // Each auto-continue must run a real provider turn, and the stall cap ends it.
+      expect(yield* llm.calls).toBe(3)
+
+      const assistants = (yield* sessions.messages({ sessionID: chat.id })).filter(
+        (msg) => msg.info.role === "assistant",
+      )
+      expect(assistants).toHaveLength(3)
+      for (const assistant of assistants) {
+        expect(assistant.parts.filter((part) => part.type === "reasoning")).toHaveLength(1)
+        expect(assistant.parts.filter((part) => part.type === "text" && part.synthetic)).toHaveLength(1)
+      }
+    }),
+  { config: cfg },
+  20_000,
+)
+
 withMcpInstructions.instance(
   "loop includes MCP instructions in model system context",
   () =>

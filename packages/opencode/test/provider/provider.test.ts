@@ -2017,6 +2017,35 @@ it.effect("opencode loader keeps paid models when config apiKey is present", () 
   }).pipe(provideMultiInstance),
 )
 
+it.effect("opencode keyring auth populates keys and keeps paid models", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped()
+    const authPath = path.join(Global.Path.data, "auth.json")
+    const original = yield* Effect.promise(() => Filesystem.readText(authPath).catch(() => undefined))
+
+    yield* Effect.acquireRelease(
+      Effect.promise(() =>
+        Filesystem.write(authPath, JSON.stringify({ opencode: { type: "keyring", keys: ["key-1", "key-2"] } })),
+      ),
+      () =>
+        Effect.promise(async () => {
+          if (original !== undefined) await Filesystem.write(authPath, original)
+          else await unlink(authPath).catch(() => undefined)
+        }),
+    )
+
+    const listed = yield* Provider.use
+      .list()
+      .pipe(provideInstanceEffect(dir))
+      .pipe(Effect.provide(instanceStoreLayer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node)))
+
+    const opencode = listed[ProviderV2.ID.make("opencode")]!
+    expect(opencode.key).toBe("key-1")
+    expect(opencode.keys).toEqual(["key-1", "key-2"])
+    expect(opencode.source).toBe("api")
+  }).pipe(provideMultiInstance),
+)
+
 it.effect("opencode loader keeps paid models when auth exists", () =>
   Effect.gen(function* () {
     const noneDir = yield* tmpdirScoped()

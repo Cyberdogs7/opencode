@@ -1,10 +1,11 @@
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { Progress } from "@opencode-ai/ui/progress"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { Tag } from "@opencode-ai/ui/tag"
 import { showToast } from "@/utils/toast"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
-import { createMemo, type Component, For, Show } from "solid-js"
+import { createMemo, createResource, type Component, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
@@ -12,6 +13,49 @@ import { DialogConnectProvider, useProviderConnectController } from "./dialog-co
 import { DialogCustomProvider } from "./dialog-custom-provider"
 import { SettingsList } from "./settings-list"
 import { SettingsServerPicker, SettingsServerScope } from "./settings-server-picker"
+
+function formatReset(seconds: number) {
+  const d = Math.floor(seconds / 86400)
+  const h = Math.floor((seconds % 86400) / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  return m > 0 ? `${m}m` : "<1m"
+}
+
+function LiteUsageBar(props: { label: string; usage: { usagePercent: number; resetInSec: number } }) {
+  return (
+    <div class="flex flex-col gap-1">
+      <div class="flex justify-between text-12-regular text-text-weak">
+        <span>{props.label}</span>
+        <span>{props.usage.usagePercent}%</span>
+      </div>
+      <Progress value={props.usage.usagePercent} maxValue={100} showValueLabel={false} hideLabel />
+      <span class="text-11-regular text-text-weak">Resets in {formatReset(props.usage.resetInSec)}</span>
+    </div>
+  )
+}
+
+function LiteUsageSection() {
+  const serverSdk = useServerSDK()
+  const [usage] = createResource(() =>
+    serverSdk().client
+      .get({ url: "/experimental/usage/lite" })
+      .then((r: unknown) => r as { rolling: { usagePercent: number; resetInSec: number }; weekly: { usagePercent: number; resetInSec: number }; monthly: { usagePercent: number; resetInSec: number } }),
+  )
+  return (
+    <Show when={usage()}>
+      {(data) => (
+        <div class="flex flex-col gap-3 py-2 px-1">
+          <h4 class="text-13-medium text-text-strong">Go Usage Limits</h4>
+          <LiteUsageBar label="5 hour" usage={data().rolling} />
+          <LiteUsageBar label="1 week" usage={data().weekly} />
+          <LiteUsageBar label="1 month" usage={data().monthly} />
+        </div>
+      )}
+    </Show>
+  )
+}
 
 type ProviderSource = "env" | "api" | "config" | "custom"
 type ProviderItem = ReturnType<ReturnType<typeof useProviders>["connected"]>[number]
@@ -165,23 +209,30 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
             >
               <For each={connected()}>
                 {(item) => (
-                  <div class="group flex flex-wrap items-center justify-between gap-4 min-h-16 py-3 border-b border-border-weak-base last:border-none">
-                    <div class="flex items-center gap-3 min-w-0">
-                      <ProviderIcon id={item.id} class="size-5 shrink-0 icon-strong-base" />
-                      <span class="text-14-medium text-text-strong truncate">{item.name}</span>
-                      <Tag>{type(item)}</Tag>
+                  <div>
+                    <div class="group flex flex-wrap items-center justify-between gap-4 min-h-16 py-3 border-b border-border-weak-base last:border-none">
+                      <div class="flex items-center gap-3 min-w-0">
+                        <ProviderIcon id={item.id} class="size-5 shrink-0 icon-strong-base" />
+                        <span class="text-14-medium text-text-strong truncate">{item.name}</span>
+                        <Tag>{type(item)}</Tag>
+                      </div>
+                      <Show
+                        when={canDisconnect(item)}
+                        fallback={
+                          <span class="text-14-regular text-text-base opacity-0 group-hover:opacity-100 transition-opacity duration-200 pr-3 cursor-default">
+                            {language.t("settings.providers.connected.environmentDescription")}
+                          </span>
+                        }
+                      >
+                        <Button size="large" variant="ghost" onClick={() => void disconnect(item.id, item.name)}>
+                          {language.t("common.disconnect")}
+                        </Button>
+                      </Show>
                     </div>
-                    <Show
-                      when={canDisconnect(item)}
-                      fallback={
-                        <span class="text-14-regular text-text-base opacity-0 group-hover:opacity-100 transition-opacity duration-200 pr-3 cursor-default">
-                          {language.t("settings.providers.connected.environmentDescription")}
-                        </span>
-                      }
-                    >
-                      <Button size="large" variant="ghost" onClick={() => void disconnect(item.id, item.name)}>
-                        {language.t("common.disconnect")}
-                      </Button>
+                    <Show when={item.id === "opencode-go"}>
+                      <div class="pl-8 pb-2">
+                        <LiteUsageSection />
+                      </div>
                     </Show>
                   </div>
                 )}

@@ -655,6 +655,28 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  // Regression: the reasoning-only auto-continue guard counted stalled history by
+  // non-empty reasoning text, so a provider that emits an empty reasoning block
+  // (encrypted reasoning, no summary) stalled on every turn without ever
+  // advancing the cap and repeated itself until the hard step limit.
+  it.effect("bounds reasoning-only auto-continue when reasoning text is empty", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Plan the fix" }), resume: false })
+      requests.length = 0
+      responses = Array.from({ length: 40 }, (_, index) =>
+        fragmentFixture("reasoning", `reasoning-${index}`, [""]).completeEvents,
+      )
+
+      yield* session.resume(sessionID)
+
+      expect(requests.length).toBeLessThanOrEqual(4)
+      const assistants = (yield* session.messages({ sessionID })).filter((message) => message.type === "assistant")
+      expect(assistants).toHaveLength(requests.length)
+    }),
+  )
+
   it.effect("retries the first provider turn after system context becomes available", () =>
     Effect.gen(function* () {
       yield* setup

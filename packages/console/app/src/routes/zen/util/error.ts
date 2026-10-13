@@ -17,12 +17,24 @@ export class FreeUsageLimitError extends LimitError {}
 export class BlackUsageLimitError extends LimitError {}
 
 type LimitName = "5 hour" | "weekly" | "monthly"
+export type LimitStatus = {
+  status: "ok" | "rate-limited"
+  usagePercent: number
+  resetInSec: number
+}
+export type CombinedLimits = {
+  rolling: LimitStatus
+  weekly: LimitStatus
+  monthly: LimitStatus
+}
 export class GoUsageLimitError extends LimitError {
   workspace: string
   limitName: LimitName
-  constructor(message: string, workspace: string, limitName: LimitName, retryAfter?: number) {
+  limits: CombinedLimits
+  constructor(message: string, workspace: string, limitName: LimitName, limits: CombinedLimits, retryAfter?: number) {
     super(message, retryAfter)
     this.workspace = workspace
     this.limitName = limitName
+    this.limits = limits
   }
 }

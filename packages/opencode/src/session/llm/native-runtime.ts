@@ -1,5 +1,6 @@
 import type { Auth } from "@/auth"
 import type { Provider } from "@/provider/provider"
+import { KeyRing } from "@opencode-ai/core/session/runner/key-ring"
 import { ProviderTransform } from "@/provider/transform"
 import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
@@ -61,7 +62,13 @@ function statusWithFetch(
     return { type: "unsupported", reason: "OAuth auth requires a provider fetch override" }
   }
 
-  const apiKey = typeof input.provider.options.apiKey === "string" ? input.provider.options.apiKey : input.provider.key
+  const entries = input.provider.keys?.length ? input.provider.keys : input.provider.key ? [input.provider.key] : []
+  const apiKey =
+    typeof input.provider.options.apiKey === "string"
+      ? input.provider.options.apiKey
+      : entries.length > 1
+        ? (KeyRing.pick(providerID, entries) ?? entries[0])
+        : entries[0]
   if (!apiKey) return { type: "unsupported", reason: "API key is not configured" }
 
   return {

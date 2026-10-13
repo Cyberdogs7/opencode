@@ -1083,6 +1083,10 @@ const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
+        // Assistant messages whose reasoning-only stall already re-entered the
+        // provider loop. Without this, a stalled turn satisfies the exit
+        // condition again on the next pass and the loop never reaches the model.
+        const autoContinued = new Set<MessageID>()
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1112,6 +1116,14 @@ const layer = Layer.effect(
               (part): part is SessionV1.ReasoningPart => part.type === "reasoning" && !!part.text?.trim(),
             ) ?? []
           const hasReasoning = reasoningParts.length > 0
+          // A turn is only stalled when it produced reasoning but no visible
+          // answer. Any real (non-synthetic) text part means the model finished
+          // its response, so the loop must exit instead of re-running and
+          // repeating the answer.
+          const hasVisibleText =
+            lastAssistantMsg?.parts.some((part) => part.type === "text" && !part.synthetic && !!part.text?.trim()) ??
+            false
+          const reasoningOnlyStall = hasReasoning && !hasVisibleText
 
           if (
             lastAssistant?.finish &&
@@ -1132,8 +1144,12 @@ const layer = Layer.effect(
             }
             // #1: reasoning-only turns look empty in the TUI (reasoning is
             // collapsed/hidden). Mirror it as visible text so "returned without
-            // a response" never happens.
-            if (hasReasoning) {
+            // a response" never happens. Mirroring is idempotent: re-adding it on
+            // every pass duplicated the same reasoning without end.
+            const mirrored =
+              (lastAssistantMsg?.parts.filter((part) => part.type === "text" && part.synthetic).length ?? 0) >=
+              reasoningParts.length
+            if (reasoningOnlyStall && !mirrored) {
               for (const rp of reasoningParts) {
                 yield* sessions.updatePart({
                   id: PartID.ascending(),
@@ -1144,25 +1160,33 @@ const layer = Layer.effect(
                   synthetic: true,
                 } satisfies SessionV1.TextPart)
               }
-              // #2: auto-continue instead of parking — the model planned work
-              // (e.g. "apply min(...) fixes") but emitted 0 tool-calls. Don't
-              // require a manual "continue" steer; re-enter the provider loop.
-              // Guard against infinite reasoning-only loops: cap consecutive auto-continues.
-              const recentReasoningOnlyCount = msgs
-                .filter((m) => m.info.role === "assistant" && m.info.finish && !["tool-calls"].includes(m.info.finish))
-                .slice(-3)
-                .filter((m) => m.parts.some((part) => part.type === "reasoning" && !!part.text?.trim())).length
-              if (recentReasoningOnlyCount < 3) {
-                yield* Effect.logInfo("auto-continuing reasoning-only stall", {
-                  "session.id": sessionID,
-                  messageID: lastAssistant.id,
-                  finish: lastAssistant.finish,
-                })
-                continue
-              }
             }
-            yield* Effect.logInfo("exiting loop", { "session.id": sessionID })
-            break
+            // #2: auto-continue instead of parking: the model planned work
+            // (e.g. "apply min(...) fixes") but emitted no tool-calls. Fall
+            // through to the provider turn below so each attempt actually runs
+            // the model. A stalled turn satisfies this exit condition again on
+            // the next pass, so `continue` used to spin here forever; cap
+            // consecutive reasoning-only stalls and auto-continue each assistant
+            // message at most once instead.
+            const recentStalls = msgs
+              .filter((m) => m.info.role === "assistant" && m.info.finish && !["tool-calls"].includes(m.info.finish))
+              .slice(-3)
+              .filter(
+                (m) =>
+                  m.parts.some((part) => part.type === "reasoning" && !!part.text?.trim()) &&
+                  !m.parts.some((part) => part.type === "text" && !part.synthetic && !!part.text?.trim()),
+              ).length
+            if (reasoningOnlyStall && !autoContinued.has(lastAssistant.id) && recentStalls < 3) {
+              autoContinued.add(lastAssistant.id)
+              yield* Effect.logInfo("auto-continuing reasoning-only stall", {
+                "session.id": sessionID,
+                messageID: lastAssistant.id,
+                finish: lastAssistant.finish,
+              })
+            } else {
+              yield* Effect.logInfo("exiting loop", { "session.id": sessionID })
+              break
+            }
           }
 
           step++

@@ -13,6 +13,7 @@ import { Credential } from "../../credential"
 import { Integration } from "../../integration"
 import { ModelV2 } from "../../model"
 import { ProviderV2 } from "../../provider"
+import { KeyRing } from "./key-ring"
 import { SessionSchema } from "../schema"
 
 export class ModelNotSelectedError extends Schema.TaggedErrorClass<ModelNotSelectedError>()(
@@ -82,6 +83,10 @@ export const layerWith = (resolve: Interface["resolve"]) => Layer.succeed(Servic
 
 const apiKey = (model: ModelV2.Info, credential?: Credential.Value) => {
   if (credential?.type === "key") return Auth.value(credential.key)
+  if (credential?.type === "keyring") {
+    const key = KeyRing.pick(model.providerID, credential.keys)
+    if (key) return Auth.value(key)
+  }
   if (credential?.type === "oauth") return Auth.value(credential.access)
   const value = model.request.body.apiKey ?? model.api.settings?.apiKey
   if (typeof value === "string") return Auth.value(value)
@@ -128,17 +133,25 @@ const withVariant = (
 const apiName = (model: ModelV2.Info) =>
   model.api.type === "aisdk" ? `${model.api.type}:${model.api.package}` : model.api.type
 
+function credentialWithRing(value?: Credential.Value): Credential.Value | undefined {
+  if (value?.type !== "key") return value
+  const additional = value.metadata?.additionalKeys
+  if (!Array.isArray(additional) || additional.length === 0) return value
+  return { type: "keyring", keys: [value.key, ...additional], metadata: value.metadata } satisfies Credential.Value
+}
+
 export const fromCatalogModel = (
   model: ModelV2.Info,
   credential?: Credential.Value,
 ): Effect.Effect<Model, UnsupportedApiError> => {
+  const ring = credentialWithRing(credential)
   const resolved =
-    credential?.type !== "key" || credential.metadata === undefined
+    (ring?.type !== "key" && ring?.type !== "keyring") || ring.metadata === undefined
       ? model
       : produce(model, (draft) => {
-          Object.assign(draft.request.body, credential.metadata)
+          Object.assign(draft.request.body, ring.metadata)
         })
-  const key = apiKey(resolved, credential)
+  const key = apiKey(resolved, ring)
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/openai") {
     return Effect.succeed(
       withDefaults(resolved, OpenAIResponses.route)

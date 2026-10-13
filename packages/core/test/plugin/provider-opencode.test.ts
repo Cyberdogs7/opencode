@@ -303,6 +303,32 @@ describe("OpencodePlugin", () => {
     ),
   )
 
+  it.effect("falls back to OPENCODE_GO_API_KEY when OPENCODE_API_KEY is not set", () =>
+    withEnv({ OPENCODE_API_KEY: undefined, OPENCODE_GO_API_KEY: "fallback-secret" }, () =>
+      Effect.gen(function* () {
+        const catalog = yield* Catalog.Service
+        yield* catalog.transform((catalog) => {
+          const provider = ProviderV2.Info.make({
+            ...ProviderV2.Info.empty(ProviderV2.ID.opencode),
+            api: { type: "aisdk", package: "test-provider" },
+          })
+          const model = ModelV2.Info.make({
+            ...ModelV2.Info.empty(provider.id, ModelV2.ID.make("paid")),
+            api: { id: ModelV2.ID.make("paid"), type: "aisdk", package: "test-provider" },
+            cost: cost(1),
+          })
+          catalog.provider.update(provider.id, () => {})
+          catalog.model.update(provider.id, model.id, (draft) => {
+            draft.cost = [...model.cost]
+          })
+        })
+        yield* addPlugin()
+        expect(required(yield* catalog.provider.get(ProviderV2.ID.opencode)).request.body.apiKey).toBeUndefined()
+        expect(required(yield* catalog.model.get(ProviderV2.ID.opencode, ModelV2.ID.make("paid"))).enabled).toBe(true)
+      }),
+    ),
+  )
+
   it.effect("uses configured provider env vars as credentials", () =>
     withEnv({ OPENCODE_API_KEY: undefined, CUSTOM_OPENCODE_API_KEY: "secret" }, () =>
       Effect.gen(function* () {

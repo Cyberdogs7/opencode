@@ -83,14 +83,22 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
     let connected = false
     let providers: typeof ConfigV1.Info.Type.provider | undefined
 
+    const wrapKeyRing = (credential: CredentialValue): CredentialValue => {
+      if (credential.type !== "key") return credential
+      const additional = credential.metadata?.additionalKeys
+      if (!Array.isArray(additional) || additional.length === 0) return credential
+      return { type: "keyring", keys: [credential.key, ...additional], metadata: credential.metadata }
+    }
+
     const load = Effect.fn("OpencodePlugin.load")(function* () {
       const connection = yield* ctx.integration.connection.active("opencode")
       const credential = connection
         ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.catch(() => Effect.succeed(undefined)))
         : undefined
       connected = connection !== undefined
-      providers = credential
-        ? yield* fetchProviders(http, credential).pipe(
+      const ring = credential ? wrapKeyRing(credential) : undefined
+      providers = ring
+        ? yield* fetchProviders(http, ring).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("failed to load OpenCode provider config", { cause }).pipe(Effect.as(undefined)),
             ),
@@ -164,7 +172,10 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
 
       const item = catalog.provider.get(ProviderV2.ID.opencode)
       if (!item) return
-      const hasKey = Boolean(process.env.OPENCODE_API_KEY || connected || item.provider.request.body.apiKey)
+      const apiKey =
+        process.env.OPENCODE_API_KEY ??
+        process.env.OPENCODE_GO_API_KEY
+      const hasKey = Boolean(apiKey || connected || item.provider.request.body.apiKey)
       catalog.provider.update(item.provider.id, (provider) => {
         if (!hasKey) provider.request.body.apiKey = "public"
       })
@@ -191,7 +202,7 @@ function fetchProviders(http: HttpClient.HttpClient, value: CredentialValue) {
   const metadata = value.metadata
   const server = typeof metadata?.server === "string" ? metadata.server : defaultServer
   const orgID = typeof metadata?.orgID === "string" ? metadata.orgID : undefined
-  const token = value.type === "oauth" ? value.access : value.key
+  const token = value.type === "oauth" ? value.access : value.type === "keyring" ? value.keys[0] : value.key
   return http
     .execute(
       HttpClientRequest.get(`${server}/api/config`).pipe(
