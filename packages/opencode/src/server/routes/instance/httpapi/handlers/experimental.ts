@@ -179,18 +179,21 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const getUsageLite = Effect.fn("ExperimentalHttpApi.usageLite")(function* () {
       const active = yield* account.active().pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
       if (Option.isNone(active)) return yield* Effect.fail(new HttpApiError.InternalServerError({}))
-      const { id: accountID, active_org_id } = active.value
-      const token = yield* account.token(accountID).pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
+      const token = yield* account
+        .token(active.value.id)
+        .pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
       if (Option.isNone(token)) return yield* Effect.fail(new HttpApiError.InternalServerError({}))
-      const { account: acct, accessToken } = token.value
       const http = yield* HttpClient.HttpClient
-      const response = yield* http.execute(
-        HttpClientRequest.get(`${acct.url}/api/usage/lite`).pipe(
-          HttpClientRequest.acceptJson,
-          HttpClientRequest.bearerToken(accessToken),
-          ...(active_org_id ? [HttpClientRequest.setHeader("x-org-id", active_org_id)] : []),
-        ),
-      ).pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
+      const request = HttpClientRequest.get(`${active.value.url}/api/usage/lite`).pipe(
+        HttpClientRequest.acceptJson,
+        HttpClientRequest.bearerToken(token.value),
+      )
+      const withOrg = active.value.active_org_id
+        ? request.pipe(HttpClientRequest.setHeader("x-org-id", active.value.active_org_id))
+        : request
+      const response = yield* http
+        .execute(withOrg)
+        .pipe(Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))))
       return yield* HttpClientResponse.schemaBodyJson(LiteUsageResponse)(response).pipe(
         Effect.catch(() => Effect.fail(new HttpApiError.InternalServerError({}))),
       )

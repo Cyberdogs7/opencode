@@ -105,9 +105,11 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
       connection: {
         active: (id) => integration.connection.active(Integration.ID.make(id)),
         resolve: (connection) =>
-          integration.connection.resolve(
-            connection.type === "credential" ? { ...connection, id: Credential.ID.make(connection.id) } : connection,
-          ),
+          integration.connection
+            .resolve(
+              connection.type === "credential" ? { ...connection, id: Credential.ID.make(connection.id) } : connection,
+            )
+            .pipe(Effect.map(mutable)),
       },
       transform: (callback) =>
         integration.transform((draft) =>

@@ -389,7 +389,7 @@ export const locationLayer = Layer.effect(
           }
           const credential = yield* credentials.get(connection.id)
           if (!credential) return undefined
-          if (credential.value.type === "key") return credential.value
+          if (credential.value.type !== "oauth") return credential.value
           const implementation = state
             .get()
             .integrations.get(credential.integrationID)

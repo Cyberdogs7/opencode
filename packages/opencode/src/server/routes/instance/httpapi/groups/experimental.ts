@@ -88,9 +88,9 @@ export const SessionListQuery = Schema.Struct({
 })
 
 export const LiteUsageResponse = Schema.Struct({
-  rolling: Schema.Struct({ status: Schema.String, usagePercent: Schema.Number, resetInSec: Schema.Number }),
-  weekly: Schema.Struct({ status: Schema.String, usagePercent: Schema.Number, resetInSec: Schema.Number }),
-  monthly: Schema.Struct({ status: Schema.String, usagePercent: Schema.Number, resetInSec: Schema.Number }),
+  rolling: Schema.Struct({ status: Schema.String, usagePercent: Schema.Finite, resetInSec: Schema.Finite }),
+  weekly: Schema.Struct({ status: Schema.String, usagePercent: Schema.Finite, resetInSec: Schema.Finite }),
+  monthly: Schema.Struct({ status: Schema.String, usagePercent: Schema.Finite, resetInSec: Schema.Finite }),
 }).annotate({ identifier: "LiteUsage" })
 
 export const ExperimentalPaths = {

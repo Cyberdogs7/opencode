@@ -129,7 +129,16 @@ export type WellKnownAuth = {
   token: string
 }
 
-export type Auth = OAuth | ApiAuth | WellKnownAuth
+export type KeyRingAuth = {
+  type: "keyring"
+  keys: Array<string>
+  activeIndex?: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+  metadata?: {
+    [key: string]: string
+  }
+}
+
+export type Auth = OAuth | ApiAuth | WellKnownAuth | KeyRingAuth
 
 export type EffectHttpApiErrorBadRequest = {
   _tag: "BadRequest"
@@ -685,6 +694,23 @@ export type SessionStatus =
         message: string
         label: string
         link?: string
+        limits?: {
+          rolling: {
+            status: "ok" | "rate-limited"
+            usagePercent: number
+            resetInSec: number
+          }
+          weekly: {
+            status: "ok" | "rate-limited"
+            usagePercent: number
+            resetInSec: number
+          }
+          monthly: {
+            status: "ok" | "rate-limited"
+            usagePercent: number
+            resetInSec: number
+          }
+        }
       }
       next: number
     }
@@ -2113,6 +2139,7 @@ export type Provider = {
   source: "env" | "config" | "custom" | "api"
   env: Array<string>
   key?: string
+  keys?: Array<string>
   options: {
     [key: string]: unknown
   }
@@ -2239,6 +2266,24 @@ export type GlobalSession = {
     diff?: string
   }
   project: ProjectSummary | null
+}
+
+export type LiteUsage = {
+  rolling: {
+    status: string
+    usagePercent: number
+    resetInSec: number
+  }
+  weekly: {
+    status: string
+    usagePercent: number
+    resetInSec: number
+  }
+  monthly: {
+    status: string
+    usagePercent: number
+    resetInSec: number
+  }
 }
 
 export type McpResource = {
@@ -3011,7 +3056,7 @@ export type EventTuiSessionSelect2 = {
   }
 }
 
-export type CredentialValue = CredentialOAuth | CredentialKey
+export type CredentialValue = CredentialOAuth | CredentialKey | CredentialKeyRing
 
 export type IntegrationInputs = {
   [key: string]: string
@@ -7066,6 +7111,15 @@ export type CredentialKey = {
   }
 }
 
+export type CredentialKeyRing = {
+  type: "keyring"
+  keys: Array<string>
+  activeIndex?: number | "NaN" | "Infinity" | "-Infinity"
+  metadata?: {
+    [key: string]: unknown
+  }
+}
+
 export type SkillV2DirectorySource = {
   type: "directory"
   path: string
@@ -7852,6 +7906,38 @@ export type ExperimentalSessionBackgroundResponses = {
 
 export type ExperimentalSessionBackgroundResponse =
   ExperimentalSessionBackgroundResponses[keyof ExperimentalSessionBackgroundResponses]
+
+export type ExperimentalUsageLiteData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/usage/lite"
+}
+
+export type ExperimentalUsageLiteErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * InternalServerError
+   */
+  500: EffectHttpApiErrorInternalServerError
+}
+
+export type ExperimentalUsageLiteError = ExperimentalUsageLiteErrors[keyof ExperimentalUsageLiteErrors]
+
+export type ExperimentalUsageLiteResponses = {
+  /**
+   * Lite subscription usage
+   */
+  200: LiteUsage
+}
+
+export type ExperimentalUsageLiteResponse = ExperimentalUsageLiteResponses[keyof ExperimentalUsageLiteResponses]
 
 export type ExperimentalResourceListData = {
   body?: never

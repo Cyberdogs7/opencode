@@ -38,11 +38,7 @@ function LiteUsageBar(props: { label: string; usage: { usagePercent: number; res
 
 function LiteUsageSection() {
   const serverSdk = useServerSDK()
-  const [usage] = createResource(() =>
-    serverSdk().client
-      .get({ url: "/experimental/usage/lite" })
-      .then((r: unknown) => r as { rolling: { usagePercent: number; resetInSec: number }; weekly: { usagePercent: number; resetInSec: number }; monthly: { usagePercent: number; resetInSec: number } }),
-  )
+  const [usage] = createResource(() => serverSdk().client.experimental.usage.lite().then((result) => result.data))
   return (
     <Show when={usage()}>
       {(data) => (

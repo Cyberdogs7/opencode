@@ -6,7 +6,10 @@ import { Integration } from "@opencode-ai/core/integration"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import type { IntegrationEnvMethod, IntegrationKeyMethod, IntegrationOAuthMethod } from "@opencode-ai/sdk/v2/types"
+import type { DeepMutable } from "@opencode-ai/core/schema"
 import { Effect } from "effect"
+
+const mutable = <T>(value: T) => value as DeepMutable<T>
 
 type Overrides = Partial<Omit<PluginContext, "options">>
 
@@ -146,9 +149,11 @@ export function integrationHost(integration: Integration.Interface): PluginConte
     connection: {
       active: (id) => integration.connection.active(Integration.ID.make(id)),
       resolve: (connection) =>
-        integration.connection.resolve(
-          connection.type === "credential" ? { ...connection, id: Credential.ID.make(connection.id) } : connection,
-        ),
+        integration.connection
+          .resolve(
+            connection.type === "credential" ? { ...connection, id: Credential.ID.make(connection.id) } : connection,
+          )
+          .pipe(Effect.map(mutable)),
     },
     transform: (callback) =>
       integration.transform((draft) =>
