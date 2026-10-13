@@ -90,6 +90,9 @@ const getBase = (appId: string): Configuration => ({
     perMachine: false,
     installerIcon: `resources/icons/icon.ico`,
     installerHeaderIcon: `resources/icons/icon.ico`,
+    // Replaces electron-builder's PowerShell/WMI "app is running" check with a
+    // name-based one. See resources/installer.nsh.
+    include: `resources/installer.nsh`,
   },
   linux: {
     icon: `resources/icons`,
